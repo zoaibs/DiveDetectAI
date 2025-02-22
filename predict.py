@@ -82,8 +82,9 @@ def extract_features(video_path):
 def predict_flop(video_path):
     """
     Extracts features from a test video and uses the trained classifier to predict the outcome.
+    Instead of hard 0/1 predictions, we use predict_proba to get probability estimates.
     Predictions are made for each skeleton (across frames) and then aggregated (by averaging)
-    to yield a final prediction score.
+    to yield a final probability. The final verdict is then computed based on a threshold.
     """
     features = extract_features(video_path)
     if not features:
@@ -96,9 +97,12 @@ def predict_flop(video_path):
     feature_columns = ['velocity', 'acceleration', 'torso_angle', 'contact', 'reaction_time']
     df_features = pd.DataFrame(features, columns=feature_columns)
     
-    predictions = clf.predict(df_features)
-    final_prediction = np.mean(predictions)
-    final_verdict = "Flop" if np.mean(predictions) >0.5 else "Foul"
+    # Get probability estimates: for binary classification, probas[:,1] gives probability for class 1.
+    probas = clf.predict_proba(df_features)
+    avg_proba = np.mean(probas[:, 1])
+    print(f"Average probability for 'Flop': {avg_proba}")
+    
+    final_verdict = "Flop" if avg_proba > 0.5 else "Foul"
     return final_verdict
 
 def annotate_first_video(video_path, output_video_path):
@@ -133,20 +137,17 @@ def annotate_first_video(video_path, output_video_path):
     print(f"Annotated video saved as {output_video_path}")
 
 if __name__ == '__main__':
-    test_folder = 'test'
-    # Filter test files: process only files with typical video extensions
+    test_folder = 'temp_test'
     valid_exts = ('.mp4', '.mov', '.avi')
     test_files = [f for f in os.listdir(test_folder)
                   if os.path.isfile(os.path.join(test_folder, f)) and f.lower().endswith(valid_exts)]
-    test_files = sorted(set(test_files))  # Deduplicate and sort
+    test_files = sorted(set(test_files))
     
-    # Predict on each video in the test folder
     for file in test_files:
         video_path = os.path.join(test_folder, file)
-        prediction = predict_flop(video_path)
-        print(f'{file}: {prediction}')
+        verdict = predict_flop(video_path)
+        print(f'{file}: {verdict}')
     
-    # Annotate the first video in the test folder
     if test_files:
         first_video = os.path.join(test_folder, test_files[0])
         print(f"Annotating skeletons for first test video: {first_video}")

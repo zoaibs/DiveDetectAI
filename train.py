@@ -13,6 +13,7 @@ from ultralytics import YOLO
 def euclidean_distance(pt1, pt2):
     return np.linalg.norm(np.array(pt1) - np.array(pt2))
 
+# Load YOLO pose model
 model = YOLO('yolov8n-pose.pt')
 
 def extract_features(video_path, label=None):
@@ -168,6 +169,12 @@ def main():
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     clf = RandomForestClassifier(n_estimators=100)
     clf.fit(X_train, y_train)
+    
+    # Use predict_proba to obtain probabilities on the test set
+    probas = clf.predict_proba(X_test)
+    avg_proba = np.mean(probas, axis=0)
+    print(f"Average predicted probabilities on test set: {avg_proba}")
+    
     preds = clf.predict(X_test)
     print(f"Validation Accuracy: {accuracy_score(y_test, preds) * 100:.2f}%")
     
