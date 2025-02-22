@@ -98,7 +98,8 @@ def predict_flop(video_path):
     
     predictions = clf.predict(df_features)
     final_prediction = np.mean(predictions)
-    return final_prediction
+    final_verdict = "Flop" if np.mean(predictions) >0.5 else "Foul"
+    return final_verdict
 
 def annotate_first_video(video_path, output_video_path):
     """
