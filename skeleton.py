@@ -6,7 +6,7 @@ import numpy as np
 model = YOLO('yolov8n-pose.pt')
 
 # Open the video file
-video = cv2.VideoCapture('test/foul5.mp4')
+video = cv2.VideoCapture('train/foul/foul1.mp4')
 
 # Get video properties
 frame_width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -14,7 +14,7 @@ frame_height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
 fps = int(video.get(cv2.CAP_PROP_FPS))
 
 # Create VideoWriter object
-out = cv2.VideoWriter('foul5_skeleton.mp4',
+out = cv2.VideoWriter('foul1_skeleton.mp4',
                       cv2.VideoWriter_fourcc(*'XVID'),  # Use 'XVID' or 'H264'
                       fps,
                       (frame_width, frame_height))

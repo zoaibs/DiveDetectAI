@@ -9,19 +9,6 @@ import joblib
 def euclidean_distance(pt1, pt2):
     return np.linalg.norm(np.array(pt1) - np.array(pt2))
 
-# Hardcoded baseline (normalized) values for features
-baseline = {
-    'velocity': 0.01912354192667923,
-    'acceleration': 0.9464381441927009,
-    'torso_angle': 0.034118353059798746,
-    'contact': 0.0002936621262937371,
-    'reaction_time': 2.6298694527314527e-05
-}
-
-# Set a threshold for classifying a video as "Flop"
-# Lowering this threshold (e.g., 0.4) means videos with lower average probability will be predicted as "Flop"
-THRESHOLD = 0.4
-
 # Load YOLO pose estimation model (GPU will be used automatically if available)
 yolo_model = YOLO('yolov8n-pose.pt')
 
@@ -98,12 +85,11 @@ def predict_flop(video_path):
     Instead of hard 0/1 predictions, we use predict_proba to get probability estimates.
     Predictions are made for each skeleton (across frames) and then aggregated (by averaging)
     to yield a final probability. The final verdict is then computed based on a threshold.
-    Additionally, we compute the normalized average feature vector for the video and then
-    calculate the percent difference from the baseline for each feature.
+    Additionally, we compute the normalized average feature vector for the video, which
+    represents the relative contributions of ['velocity', 'acceleration', 'torso_angle', 'contact', 'reaction_time'].
     """
     features = extract_features(video_path)
     if not features:
-        print("No features extracted from the video. Cannot make a prediction.")
         return None
     
     clf = joblib.load('flop_classifier.pkl')
@@ -111,26 +97,15 @@ def predict_flop(video_path):
     feature_columns = ['velocity', 'acceleration', 'torso_angle', 'contact', 'reaction_time']
     df_features = pd.DataFrame(features, columns=feature_columns)
     
-    # Get probability estimates: for binary classification, probas[:,1] gives probability for class 1.
     probas = clf.predict_proba(df_features)
     avg_proba = np.mean(probas[:, 1])
-    # Print average probability for debugging (if desired)
-    # print(f"Average probability for 'Flop': {avg_proba:.2f}")
     
-    # Compute normalized average feature values for the current video
     avg_feature_values = np.mean(df_features.values, axis=0)
     norm_feature_values = avg_feature_values / np.sum(avg_feature_values)
+    impact_dict = {feature: norm_feature_values[i] for i, feature in enumerate(feature_columns)}
     
-    # Calculate percent differences relative to the baseline for each feature
-    percent_diff = {}
-    for i, feature in enumerate(feature_columns):
-        base_val = baseline[feature]
-        current_val = norm_feature_values[i]
-        percent_difference = ((current_val - base_val) / base_val) * 100
-        percent_diff[feature] = percent_difference
-    
-    final_verdict = "Flop" if avg_proba > THRESHOLD else "Foul"
-    return avg_proba, percent_diff, final_verdict
+    final_verdict = "Flop" if avg_proba > 0.5 else "Foul"
+    return avg_proba, impact_dict, final_verdict
 
 def annotate_first_video(video_path, output_video_path):
     """
@@ -139,7 +114,6 @@ def annotate_first_video(video_path, output_video_path):
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"Error opening video: {video_path}")
         return
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -153,7 +127,7 @@ def annotate_first_video(video_path, output_video_path):
         if not ret:
             break
         results = yolo_model.predict(frame, conf=0.3, show=False)
-        annotated_frame = results[0].plot()  # This plots all detected skeletons
+        annotated_frame = results[0].plot()
         out.write(annotated_frame)
         cv2.imshow("YOLOv8 Pose Detection", annotated_frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -170,14 +144,24 @@ if __name__ == '__main__':
                   if os.path.isfile(os.path.join(test_folder, f)) and f.lower().endswith(valid_exts)]
     test_files = sorted(set(test_files))
     
+    overall_impact = { 'velocity': 0, 'acceleration': 0, 'torso_angle': 0, 'contact': 0, 'reaction_time': 0 }
+    count = 0
     for file in test_files:
         video_path = os.path.join(test_folder, file)
         result = predict_flop(video_path)
         if result is not None:
-            avg_proba, percent_diff, verdict = result
-            print(f"File: {file}, Prediction: {verdict}, Probability: {avg_proba:.2f}, Features: {percent_diff}")
+            avg_proba, impact_dict, verdict = result
+            # Instead of printing per file, accumulate the impact_dict values
+            for key in overall_impact.keys():
+                overall_impact[key] += impact_dict.get(key, 0)
+            count += 1
+    if count > 0:
+        for key in overall_impact.keys():
+            overall_impact[key] /= count
+        # Print out a single overall average dictionary at the end.
+        print("Overall average feature breakdown:")
+        print(overall_impact)
     
     if test_files:
         first_video = os.path.join(test_folder, test_files[0])
-        print(f"Annotating skeletons for first test video: {first_video}")
         annotate_first_video(first_video, 'first_test_skeleton_output.mp4')

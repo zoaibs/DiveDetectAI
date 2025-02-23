@@ -5,6 +5,44 @@ import pandas as pd
 from tqdm import tqdm
 from ultralytics import YOLO
 import joblib
+import json
+
+# ---- Generative AI Setup ----
+import google.generativeai as genai
+genai.configure(api_key="AIzaSyAjwSb3D1loKnHrlb6NxzjcnC1nSHjOCCk")  # Replace with your actual API key
+genai_model = genai.GenerativeModel("gemini-1.5-flash")
+
+def getReason(verdict, weights):
+    # verdict should be in lowercase: "foul" or "flop"
+    if verdict == "foul":
+        custom_prompt = (
+            "I have data about a soccer player's joint movement. "
+            "According to my ML random forest classifier with the following parameters: y velocity, acceleration, torso angle, contact, reaction time. "
+            f"The feature differences are: {weights}. "
+            "This player was fouled. "
+            "Tell me the biggest reason there was a foul here. For example, a collision between the player's legs or nearly instant reaction time. "
+            "Respond like a soccer referee without mentioning the model or the weights."
+            "Also, dont talk about the torso angle."
+        )
+    else:
+        custom_prompt = (
+            "I have data about a soccer player's joint movement. "
+            "According to my ML random forest classifier with the following parameters: y velocity, acceleration, torso angle, contact, reaction time. "
+            f"The feature differences are: {weights}. "
+            "This player flopped (was not actually fouled). "
+            "Tell me the biggest reason there wasn't a foul here. For example, no contact between the player's legs or exaggerated fall timing. "
+            "Respond like a soccer referee without mentioning the model or the weights."
+            "Also, dont talk about the torso angle."
+        )
+    try:
+        response = genai_model.generate_content(custom_prompt)
+        if not response.text:
+            return "No explanation provided."
+        return response.text.strip()
+    except Exception as e:
+        return f"Error generating explanation: {str(e)}"
+
+# ---- Algorithm Functions ----
 
 def euclidean_distance(pt1, pt2):
     return np.linalg.norm(np.array(pt1) - np.array(pt2))
@@ -18,9 +56,8 @@ baseline = {
     'reaction_time': 2.6298694527314527e-05
 }
 
-# Set a threshold for classifying a video as "Flop"
-# Lowering this threshold (e.g., 0.4) means videos with lower average probability will be predicted as "Flop"
-THRESHOLD = 0.4
+# Set a threshold for prediction
+THRESHOLD = 0.5
 
 # Load YOLO pose estimation model (GPU will be used automatically if available)
 yolo_model = YOLO('yolov8n-pose.pt')
@@ -65,9 +102,7 @@ def extract_features(video_path):
                         for i in range(num_skel):
                             prev_skel = previous_keypoints[i]
                             curr_skel = current_skeletons[i]
-                            # Compute per-keypoint vertical velocity (using y-coordinate)
                             velocities = [(curr_skel[j][1] - prev_skel[j][1]) / dt for j in range(len(curr_skel))]
-                            # Compute a rough acceleration (using difference of velocities)
                             accelerations = [(velocities[j] - ((prev_skel[j][1] - curr_skel[j][1]) / dt)) / dt for j in range(len(curr_skel))]
                             shoulder = curr_skel[5]
                             hip = curr_skel[11]
@@ -107,21 +142,15 @@ def predict_flop(video_path):
         return None
     
     clf = joblib.load('flop_classifier.pkl')
-    
     feature_columns = ['velocity', 'acceleration', 'torso_angle', 'contact', 'reaction_time']
     df_features = pd.DataFrame(features, columns=feature_columns)
     
-    # Get probability estimates: for binary classification, probas[:,1] gives probability for class 1.
     probas = clf.predict_proba(df_features)
     avg_proba = np.mean(probas[:, 1])
-    # Print average probability for debugging (if desired)
-    # print(f"Average probability for 'Flop': {avg_proba:.2f}")
     
-    # Compute normalized average feature values for the current video
     avg_feature_values = np.mean(df_features.values, axis=0)
     norm_feature_values = avg_feature_values / np.sum(avg_feature_values)
     
-    # Calculate percent differences relative to the baseline for each feature
     percent_diff = {}
     for i, feature in enumerate(feature_columns):
         base_val = baseline[feature]
@@ -153,7 +182,7 @@ def annotate_first_video(video_path, output_video_path):
         if not ret:
             break
         results = yolo_model.predict(frame, conf=0.3, show=False)
-        annotated_frame = results[0].plot()  # This plots all detected skeletons
+        annotated_frame = results[0].plot()
         out.write(annotated_frame)
         cv2.imshow("YOLOv8 Pose Detection", annotated_frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -175,9 +204,14 @@ if __name__ == '__main__':
         result = predict_flop(video_path)
         if result is not None:
             avg_proba, percent_diff, verdict = result
+            # Use generative AI to get the explanation
+            # Convert verdict to lowercase for the prompt ("flop" vs "foul")
+            reason = getReason(verdict.lower(), percent_diff)
             print(f"File: {file}, Prediction: {verdict}, Probability: {avg_proba:.2f}, Features: {percent_diff}")
+            print(f"Reason: {reason}\n")
     
     if test_files:
         first_video = os.path.join(test_folder, test_files[0])
         print(f"Annotating skeletons for first test video: {first_video}")
         annotate_first_video(first_video, 'first_test_skeleton_output.mp4')
+
